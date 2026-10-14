@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#1f8a70" />
+  <title>造价小本本</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <div class="logo">造</div>
+      <div class="brand-text">
+        <div class="title">造价小本本</div>
+        <div class="subtitle"><span id="count">共 0 条</span> · 记单价 · 记事情 · 随时回忆</div>
+      </div>
+      <a id="exportBtn" class="logout" href="/api/export" download>备份</a>
+      <button id="logout" class="logout" type="button">退出</button>
+    </div>
+
+    <div class="search">
+      <input id="q" type="search" placeholder="想找啥？打一个字也行，比如：砌、电缆、丹江" autocomplete="off" />
+    </div>
+
+    <div id="filters" class="filters">
+      <button data-v="" class="f active" type="button">全部</button>
+      <button data-v="人工" class="f f-人工" type="button">人工</button>
+      <button data-v="材料" class="f f-材料" type="button">材料</button>
+      <button data-v="机械" class="f f-机械" type="button">机械</button>
+    </div>
+  </header>
+
+  <main id="list" class="list"></main>
+
+  <button id="fab" class="fab" type="button" aria-label="记一笔">+</button>
+
+  <!-- 录入 / 编辑 弹层 -->
+  <div id="sheet" class="sheet-mask hidden">
+    <div class="sheet">
+      <div class="sheet-head">
+        <span id="sheetTitle">记一笔</span>
+        <button id="sheetClose" class="sheet-close" type="button" aria-label="关闭">×</button>
+      </div>
+
+      <textarea id="content" rows="4" placeholder="把要记的写这儿，例如：&#10;杂工300元/天，人工&#10;电力电缆5*6 30元/m，材料&#10;挖机150元/小时，机械"></textarea>
+
+      <div id="preview" class="preview"></div>
+
+      <div class="sheet-label">类型（点一下切换，认错了就改）</div>
+      <div id="costPick" class="cost-pick">
+        <button data-v="自动" class="cp active" type="button">自动识别</button>
+        <button data-v="人工" class="cp" type="button">人工</button>
+        <button data-v="材料" class="cp" type="button">材料</button>
+        <button data-v="机械" class="cp" type="button">机械</button>
+      </div>
+
+      <div class="sheet-label">项目（可空，留空自动从文字里找）</div>
+      <input id="projInput" type="text" placeholder="例如：丹江外滩" />
+
+      <div class="sheet-btns">
+        <button id="save" class="btn-primary" type="button">记下来</button>
+        <button id="delete" class="btn-danger hidden" type="button">删除这条</button>
+      </div>
+
+      <div class="mic-hint">手机上：点输入框后，按键盘上的麦克风图标，说话就变成文字（最保密，录音不出手机）。</div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- 登录遮罩 -->
+  <div id="login" class="login hidden">
+    <div class="login-card">
+      <div class="login-logo">造</div>
+      <div class="login-title">造价小本本</div>
+      <div class="login-sub">请输入账号和密码</div>
+      <input id="lu" class="login-input" type="text" placeholder="用户名" autocomplete="username" />
+      <input id="lp" class="login-input" type="password" placeholder="密码" autocomplete="current-password" />
+      <button id="loginBtn" class="login-btn" type="button">登录</button>
+      <div id="loginErr" class="login-err"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

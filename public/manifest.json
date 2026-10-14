@@ -1,0 +1,14 @@
+{
+  "name": "造价小本本",
+  "short_name": "造价小本本",
+  "description": "个人造价数据小本本：按人工/材料/机械记单价、记事情，手机电脑通用。",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef1f4",
+  "theme_color": "#1f8a70",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
