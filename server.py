@@ -524,15 +524,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         ts = now_iso()
         conn = get_conn()
         cur = conn.cursor()
-        cur.execute(
-            f"""INSERT INTO records (content, category, project, amount, unit, cost_type, source, tags, created_at, updated_at)
-               VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH})""",
-            (rec['content'], rec['category'], rec['project'], rec['amount'],
-             rec['unit'], rec['cost_type'], rec['source'], rec['tags'], ts, ts),
-        )
+        cols = "content, category, project, amount, unit, cost_type, source, tags, created_at, updated_at"
+        vals = (rec['content'], rec['category'], rec['project'], rec['amount'],
+                rec['unit'], rec['cost_type'], rec['source'], rec['tags'], ts, ts)
         if USE_PG:
+            cur.execute(
+                f"""INSERT INTO records ({cols}) VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH}) RETURNING id""",
+                vals,
+            )
             rid = cur.fetchone()['id']
         else:
+            cur.execute(
+                f"""INSERT INTO records ({cols}) VALUES ({PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH},{PH})""",
+                vals,
+            )
             rid = cur.lastrowid
         cur.execute(f"SELECT * FROM records WHERE id={PH}", (rid,))
         row = row_to_dict(cur.fetchone())
