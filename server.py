@@ -26,7 +26,7 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "assistant.db")
 PORT = int(os.environ.get("PORT", "8000"))
-VERSION = '1.3.0'  # +备注(note)+含税/不含税(tax_mode)+批量导入(/api/import)+改名造价个人助手
+VERSION = '1.4.0'  # +历史价格对比(P1)+按项目汇总成本(P2)+导出Excel/CSV(P3)+离线查看(P4)+拍照(P5)
 
 # ---- 鉴权配置（云端务必通过环境变量设置）----
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
@@ -73,6 +73,7 @@ def init_db():
             feature TEXT,
             note TEXT,
             tax_mode TEXT,
+            photo TEXT,
             amount REAL,
             unit TEXT,
             cost_type TEXT,
@@ -90,6 +91,7 @@ def init_db():
             feature TEXT,
             note TEXT,
             tax_mode TEXT,
+            photo TEXT,
             amount REAL,
             unit TEXT,
             cost_type TEXT,
@@ -118,6 +120,10 @@ def init_db():
                         "WHERE table_name='records' AND column_name='tax_mode'")
             if not cur.fetchone():
                 cur.execute("ALTER TABLE records ADD COLUMN tax_mode TEXT")
+            cur.execute("SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name='records' AND column_name='photo'")
+            if not cur.fetchone():
+                cur.execute("ALTER TABLE records ADD COLUMN photo TEXT")
         else:
             cols = [c[1] for c in conn.execute("PRAGMA table_info(records)")]
             if 'cost_type' not in cols:
@@ -128,6 +134,8 @@ def init_db():
                 conn.execute("ALTER TABLE records ADD COLUMN note TEXT")
             if 'tax_mode' not in cols:
                 conn.execute("ALTER TABLE records ADD COLUMN tax_mode TEXT")
+            if 'photo' not in cols:
+                conn.execute("ALTER TABLE records ADD COLUMN photo TEXT")
         conn.commit()
     except Exception:
         pass
@@ -135,22 +143,13 @@ def init_db():
 
 
 def row_to_dict(r):
-    return {
-        'id': r['id'],
-        'content': r['content'],
-        'category': r['category'],
-        'project': r['project'],
-        'feature': r['feature'],
-        'note': r['note'],
-        'tax_mode': r['tax_mode'],
-        'amount': r['amount'],
-        'unit': r['unit'],
-        'cost_type': r['cost_type'],
-        'source': r['source'],
-        'tags': r['tags'],
-        'created_at': r['created_at'],
-        'updated_at': r['updated_at'],
-    }
+    """行 -> dict。photo 体积大，不进普通响应，单独走 /api/photo/<id> 取。"""
+    d = dict(r)
+    for k in ('content', 'category', 'project', 'feature', 'note', 'tax_mode',
+              'amount', 'unit', 'cost_type', 'source', 'tags', 'created_at', 'updated_at'):
+        d.setdefault(k, None)
+    d.pop('photo', None)
+    return d
 
 
 # ------------------------------------------------------------------ 解析逻辑
@@ -279,10 +278,14 @@ def detect_category(text, amount=None):
     return '备忘'
 
 
+STRONG_TYPE_KW = {'材料': '材料', '机械': '机械', '人工': '人工', '人工费': '人工', '工资': '人工'}
+
+
 def detect_cost_type(text):
-    # 1) 显式类型词（人工/材料/机械/台班/租赁…）优先级最高
-    for t, kws in COST_KW.items():
-        if any(k in text for k in kws):
+    # 1) 用户显式写的类型词（材料/机械/人工）最优先，尊重明确声明
+    #    否则"砌砖，材料230"会被工种词"砌砖"误判为人工
+    for kw, t in STRONG_TYPE_KW.items():
+        if kw in text:
             return t
     # 2) 建筑业数据包：人工优先于材料（处理"混凝土工"等前缀冲突），机械最后
     if any(w in text for w in COST_ITEMS['人工']):
@@ -291,6 +294,10 @@ def detect_cost_type(text):
         return '材料'
     if any(w in text for w in COST_ITEMS['机械']):
         return '机械'
+    # 3) 其余弱指示词（台班/租赁/工日…）
+    for t, kws in COST_KW.items():
+        if any(k in text for k in kws):
+            return t
     return None
 
 
@@ -469,6 +476,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send_json({'error': '未登录'}, status=401)
             if p == '/api/export':
                 return self._api_export()
+            if p == '/api/export.csv':
+                return self._api_export_csv()
+            if p.startswith('/api/photo/'):
+                return self._api_photo(p)
             return self._api_get(p, qs)
         return self._serve_static(p)
 
@@ -536,7 +547,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             cost_type = (qs.get('cost_type', [''])[0] or '').strip()
             conn = get_conn()
             cur = conn.cursor()
-            sql = "SELECT * FROM records WHERE 1=1"
+            sql = ("SELECT id, content, category, project, feature, note, tax_mode, amount, unit, "
+                   "cost_type, source, tags, created_at, updated_at, "
+                   "(photo IS NOT NULL AND photo != '') AS has_photo FROM records WHERE 1=1")
             args = []
             if q:
                 like = f'%{q}%'
@@ -585,7 +598,95 @@ class Handler(http.server.BaseHTTPRequestHandler):
             conn.close()
             return self._send_json({'total': total, 'by_category': cats})
 
+        if p == '/api/summary':
+            # 按 项目 × 人材机 汇总金额（P2，仅统计有金额的单价记录）
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT project, cost_type, COUNT(*) n, SUM(amount) s "
+                        "FROM records WHERE amount IS NOT NULL "
+                        "GROUP BY project, cost_type ORDER BY project")
+            out = {}
+            for r in cur.fetchall():
+                proj = r['project'] or '未填项目'
+                ct = r['cost_type'] or '未分类'
+                out.setdefault(proj, {})[ct] = {
+                    'count': r['n'], 'total': round(float(r['s'] or 0), 2)}
+            conn.close()
+            return self._send_json(out)
+
+        if p == '/api/history':
+            # 同一材料的历史价格（P1）：按关键词模糊匹配、时间正序
+            q = (qs.get('q', [''])[0] or '').strip()
+            if not q:
+                return self._send_json([])
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT id, content, cost_type, amount, unit, project, tax_mode, "
+                        "created_at FROM records WHERE content LIKE " + PH +
+                        " AND amount IS NOT NULL ORDER BY id ASC LIMIT 100", (f'%{q}%',))
+            rows = [dict(r) for r in cur.fetchall()]
+            conn.close()
+            return self._send_json(rows)
+
         self._send_json({'error': 'not found'}, status=404)
+
+    def _api_photo(self, path):
+        """返回某条记录的图片（P5）：库里存 dataURL，这里解析成图片二进制。"""
+        import base64
+        m = re.match(r'/api/photo/(\d+)', path)
+        if not m:
+            return self._send_text('Not Found', status=404)
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(f"SELECT photo FROM records WHERE id={PH}", (int(m.group(1)),))
+        row = cur.fetchone()
+        conn.close()
+        data_url = (dict(row).get('photo') if row else None) or ''
+        mt = re.match(r'data:([^;]+);base64,(.*)$', data_url, re.S)
+        if not mt:
+            return self._send_text('No Image', status=404)
+        try:
+            raw = base64.b64decode(mt.group(2))
+        except Exception:
+            return self._send_text('Bad Image', status=500)
+        self.send_response(200)
+        self.send_header('Content-Type', mt.group(1))
+        self.send_header('Content-Length', str(len(raw)))
+        self.send_header('Cache-Control', 'private, max-age=86400')
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _api_export_csv(self):
+        """导出全部记录为 CSV（Excel 直接打开、中文不乱码）——P3"""
+        import csv
+        import io
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM records ORDER BY id DESC")
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(['序号', '内容', '分类', '项目', '项目特征', '备注', '价格口径',
+                    '金额', '单位', '人材机', '来源', '记录时间'])
+        for r in rows:
+            w.writerow([
+                r.get('id'), r.get('content') or '', r.get('category') or '',
+                r.get('project') or '', r.get('feature') or '', r.get('note') or '',
+                r.get('tax_mode') or '',
+                '' if r.get('amount') is None else r.get('amount'),
+                r.get('unit') or '', r.get('cost_type') or '', r.get('source') or '',
+                r.get('created_at') or '',
+            ])
+        data = ('\ufeff' + buf.getvalue()).encode('utf-8')  # BOM：让 Excel 正确识别中文
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/csv; charset=utf-8')
+        self.send_header('Content-Disposition',
+                         "attachment; filename=\"costmem.csv\"; " +
+                         "filename*=UTF-8''" + quote('造价个人助手导出.csv'))
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _api_export(self):
         """导出全部记录为 JSON 文件下载（隐私数据，需登录）"""
@@ -635,17 +736,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         feature = (body.get('feature') or '').strip() or None
         note = (body.get('note') or '').strip() or None
         tax_mode = body.get('tax_mode') or None
+        photo = body.get('photo') or None
         if not rec['content']:
             return self._send_json({'error': '内容不能为空'}, status=400)
         ts = now_iso()
         conn = get_conn()
         cur = conn.cursor()
         col_list = ["content", "category", "project", "feature", "note", "tax_mode",
-                    "amount", "unit", "cost_type", "source", "tags", "created_at", "updated_at"]
+                    "amount", "unit", "cost_type", "source", "tags", "photo",
+                    "created_at", "updated_at"]
         cols = ', '.join(col_list)
         phs = ', '.join([PH] * len(col_list))  # 占位符数量随列数自动生成，防个数不匹配
         vals = (rec['content'], rec['category'], rec['project'], feature, note, tax_mode,
-                rec['amount'], rec['unit'], rec['cost_type'], rec['source'], rec['tags'], ts, ts)
+                rec['amount'], rec['unit'], rec['cost_type'], rec['source'], rec['tags'],
+                photo, ts, ts)
         if USE_PG:
             cur.execute(f"""INSERT INTO records ({cols}) VALUES ({phs}) RETURNING id""", vals)
             rid = cur.fetchone()['id']
@@ -722,14 +826,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         feature = body.get('feature', row['feature'])
         note = body.get('note', row['note'])
         tax_mode = body.get('tax_mode', row['tax_mode'])
+        photo = body.get('photo', row['photo'])
         rec = build_record(content, project=project, category=category,
                            cost_type=cost_type, source=row['source'])
         ts = now_iso()
         cur.execute(
             f"""UPDATE records SET content={PH}, category={PH}, project={PH}, feature={PH},
-               note={PH}, tax_mode={PH}, amount={PH}, unit={PH}, cost_type={PH}, tags={PH},
-               updated_at={PH} WHERE id={PH}""",
-            (rec['content'], rec['category'], rec['project'], feature, note, tax_mode,
+               note={PH}, tax_mode={PH}, photo={PH}, amount={PH}, unit={PH}, cost_type={PH},
+               tags={PH}, updated_at={PH} WHERE id={PH}""",
+            (rec['content'], rec['category'], rec['project'], feature, note, tax_mode, photo,
              rec['amount'], rec['unit'], rec['cost_type'], rec['tags'], ts, rid),
         )
         cur.execute(f"SELECT * FROM records WHERE id={PH}", (rid,))
