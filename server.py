@@ -26,7 +26,7 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "assistant.db")
 PORT = int(os.environ.get("PORT", "8000"))
-VERSION = '1.5.2'  # +照片区横排(按钮+缩略图+删除同一行)
+VERSION = '1.5.3'  # +规格型号识别增强(电压等级/公称直径/复合截面/强度等级/三维尺寸，参考广材网)
 
 # ---- 鉴权配置（云端务必通过环境变量设置）----
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
@@ -201,7 +201,7 @@ UNITS = ['立方米', '立方', 'm³', 'm3', '平方米', '平米', 'm²', 'm2',
          '延米', '千米', '公里', 'km', '米', 'm', '厘米', 'cm', '毫米', 'mm',
          '个', '根', '条', '块', '张', '片', '只', '把', '件', '套', '组', '台',
          '樘', '扇', '座', '处', '项', '次', '遍', '道', '层', '系统', '单元', '标段',
-         '桶', '袋', '卷', '箱', '捆', '车', '罐', '瓶', '圈']
+         '桶', '袋', '卷', '箱', '捆', '车', '罐', '瓶', '圈', '方']
 _UNIT_ALT = '|'.join(re.escape(u) for u in sorted(UNITS, key=len, reverse=True))
 # 价格识别：带货币(元/块/￥)，允许数字与货币之间夹"括号注释"如 20（科顺）元；
 # 支持区间价 8-10（取下限数值）。也支持"每/单价单位(/m、/卷)"。
@@ -213,12 +213,29 @@ _AMOUNT_RE = re.compile(
     r'|'
     + _PRICE_CORE2 + r'\s*(?:[（(][^）)]*[）)])?\s*(?P<per>/|每|单价|per|一)\s*(?P<unit>' + _UNIT_ALT + r')'
 )
-# 规格识别：厚度/长宽/管径等，如 1.5mm、3mm厚、10m*1m、厚2mm、Φ110
+# 规格识别（参考广材网材料规格写法）：
+#  - 电压等级 0.6/1kV / 450/750V / 8.7/15
+#  - 公称直径 DN100 / SC100 / de110
+#  - 直径/厚度符号 Φ100 / δ3.0
+#  - 厚20mm
+#  - 强度等级 C30 / M10 / M32.5
+#  - 复合截面 5×16 / 4×70+1×25 / 3×10+1×6（芯数×截面，可多段）
+#  - 尺寸组合 5*6 / 10m*1m / 1.5mm×2m×20m（二维或三维）
+#  - 型号后数字 BYJ2.5
+#  - 单独带单位 1.5mm
 _SPEC_RE = re.compile(
-    r'([\d.]+\s*(?:mm|cm|m[²³]?|平方)?\s*[×x*]\s*[\d.]+\s*(?:mm|cm|m|平方)?'
-    r'|[厚φΦ]\s*[\d.]+\s*(?:mm|cm|m)?'
-    r'|[\d.]+\s*(?:mm|cm|m[²³]?|平方)'
-    r'|(?<=[^\s\d.])[\d.]+)\b'
+    r'(?:'
+    r'\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?\s*k?V'                              # 电压等级
+    r'|(?:DN|SC|de|De)\d+(?:\.\d+)?'                                       # 公称直径
+    r'|[Φφδ]\s*\d+(?:\.\d+)?'                                              # 直径/厚度符号
+    r'|厚\s*\d+(?:\.\d+)?\s*(?:mm|cm|m)?'                                  # 厚20mm
+    r'|[CM]\d+(?:\.\d+)?'                                                  # 强度等级 C30/M10
+    r'|\d+\s*[×x*]\s*\d+(?:\s*[+]\s*\d+\s*[×x*]\s*\d+)*'                  # 复合截面
+    r'|[\d.]+\s*(?:mm|cm|m[²³]?|平方)?\s*[×x*]\s*[\d.]+\s*(?:mm|cm|m|平方)?'
+    r'(?:\s*[×x*]\s*[\d.]+\s*(?:mm|cm|m|平方)?)?'                          # 尺寸组合(二维/三维)
+    r'|(?<=[^\s\d.])\d{1,4}(?:\.\d{1,2})?(?![\w.])'                        # 型号后数字 BYJ2.5
+    r'|[\d.]+\s*(?:mm|cm|m[²³]?|平方)\s*厚?'                              # 单独带单位(可后缀"厚")
+    r')'
 )
 # 量词（名称末尾的容器/单位词，属于"每X"的X，不是材料名）
 _MEASURE_KW = ['一卷', '一包', '一桶', '一根', '一袋', '一箱', '一捆', '一车', '一台',
@@ -440,8 +457,8 @@ def parse_items(content):
                 unit = (unit.split('/')[0] if unit else '元') + '/' + measure
                 before = before[:mq.start()] + before[mq.end():]
             specs = _SPEC_RE.findall(before)
-            spec = ''.join(specs).strip() if specs else ''
-            name = _SPEC_RE.sub('', before).strip().rstrip('，,、：:').strip()
+            spec = ' '.join(specs).strip() if specs else ''
+            name = _SPEC_RE.sub(' ', before).strip().rstrip('，,、：:').strip()
             name = re.sub(r'[的一]$', '', name).strip()
             # 连续清理名称末尾的价格上下文噪声词（允许 - / 空格等连接符一起去掉）
             for _ in range(10):
