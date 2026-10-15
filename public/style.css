@@ -45,6 +45,12 @@ a.logout{text-decoration:none}
 .badge{font-size:12px;padding:3px 10px;border-radius:9px;color:#fff;font-weight:700}
 .b-人工{background:var(--人工)} .b-材料{background:var(--材料)} .b-机械{background:var(--机械)}
 .b-proj{background:#eef1f4;color:#374151}
+.b-feat{background:#fff3d6;color:#7a5200}
+.b-tax{background:#e6f0ff;color:#1d4ed8}
+.b-thing{background:#ede9fe;color:#5b21b6}
+.f-thing.active{background:#ede9fe;color:#5b21b6;border-color:#c4b5fd}
+.card-note{margin-top:6px;font-size:13.5px;color:var(--sub);white-space:pre-wrap;word-break:break-word;line-height:1.45}
+.hidden-file{display:none}
 .amount{margin-left:auto;font-weight:800;font-size:18px;color:var(--teal-d)}
 .amount small{font-weight:500;color:var(--sub);font-size:13px}
 .card-content{font-size:17px;white-space:pre-wrap;word-break:break-word;line-height:1.5}
