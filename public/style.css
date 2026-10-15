@@ -51,6 +51,25 @@ a.logout{text-decoration:none}
 .f-thing.active{background:#ede9fe;color:#5b21b6;border-color:#c4b5fd}
 .card-note{margin-top:6px;font-size:13.5px;color:var(--sub);white-space:pre-wrap;word-break:break-word;line-height:1.45}
 .hidden-file{display:none}
+.thumb{margin-top:8px;max-width:100%;max-height:180px;border-radius:10px;display:block;border:1px solid var(--line)}
+.photo-row{display:flex;flex-direction:column;gap:8px}
+.photo-btn{align-self:flex-start;border:1px dashed var(--line);background:#fff;color:var(--teal-d);font-size:14px;padding:8px 14px;border-radius:10px;cursor:pointer}
+.photo-preview{align-self:flex-start}
+.photo-preview img{max-width:100%;max-height:220px;border-radius:10px;border:1px solid var(--line);display:block}
+.photo-del{margin-top:6px;border:1px solid #f0c4c4;background:#fff;color:#c0392b;font-size:13px;padding:5px 12px;border-radius:9px;cursor:pointer}
+.history-box{margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#f8fbfa}
+.history-title{font-size:13px;color:var(--sub);margin-bottom:6px}
+.history-item{display:flex;gap:10px;font-size:14px;padding:3px 0}
+.h-date{color:var(--sub);min-width:80px}
+.h-type{color:var(--teal-d);min-width:38px}
+.h-price{font-weight:700;margin-left:auto}
+.summary-body{max-height:64vh;overflow:auto}
+.sum-block{margin-bottom:16px}
+.sum-proj{font-weight:800;font-size:16px;margin:6px 0}
+.sum-table{width:100%;border-collapse:collapse;font-size:14px}
+.sum-table th,.sum-table td{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left}
+.sum-table .num{text-align:right;font-weight:700}
+.sum-total td{font-weight:800;color:var(--teal-d)}
 .amount{margin-left:auto;font-weight:800;font-size:18px;color:var(--teal-d)}
 .amount small{font-weight:500;color:var(--sub);font-size:13px}
 .card-content{font-size:17px;white-space:pre-wrap;word-break:break-word;line-height:1.5}
