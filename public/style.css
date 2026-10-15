@@ -52,9 +52,17 @@ a.logout{text-decoration:none}
 .b-proj{background:#eef1f4;color:#374151}
 .b-feat{background:#fff3d6;color:#7a5200}
 .b-tax{background:#e6f0ff;color:#1d4ed8}
+.b-src{background:#e8f5e9;color:#1b5e20}
 .b-thing{background:#ede9fe;color:#5b21b6}
 .f-thing.active{background:#ede9fe;color:#5b21b6;border-color:#c4b5fd}
 .card-note{margin-top:6px;font-size:13.5px;color:var(--sub);white-space:pre-wrap;word-break:break-word;line-height:1.45}
+.card-items{margin-top:8px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.card-items .ci{display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:14px}
+.card-items .ci:nth-child(odd){background:#f8fafb}
+.card-items .ci-n{color:var(--ink);flex:1;word-break:break-word}
+.card-items .ci-p{font-weight:800;color:var(--teal-d);white-space:nowrap}
+.preview .pv-items{margin-top:6px;border-top:1px dashed #bfe9d8;padding-top:6px}
+.preview .pvi{font-size:13.5px;color:var(--teal-d);padding:1px 0}
 .hidden-file{display:none}
 .thumb{margin-top:8px;max-width:100%;max-height:180px;border-radius:10px;display:block;border:1px solid var(--line)}
 .photo-row{display:flex;flex-direction:column;gap:8px}
@@ -77,6 +85,7 @@ a.logout{text-decoration:none}
 .sum-total td{font-weight:800;color:var(--teal-d)}
 .amount{margin-left:auto;font-weight:800;font-size:18px;color:var(--teal-d)}
 .amount small{font-weight:500;color:var(--sub);font-size:13px}
+.amount-total{margin-left:8px;color:#7c3aed;font-size:16px}
 .card-content{font-size:17px;white-space:pre-wrap;word-break:break-word;line-height:1.5}
 .card-meta{margin-top:8px;font-size:12.5px;color:var(--sub);display:flex;gap:10px;flex-wrap:wrap}
 .empty{text-align:center;color:var(--sub);padding:46px 22px;font-size:15px;line-height:1.8}
@@ -94,17 +103,28 @@ a.logout{text-decoration:none}
 .sheet-mask.hidden{display:none}
 .sheet{background:#fff;width:100%;max-width:600px;border-radius:20px 20px 0 0;padding:18px 16px;
   padding-bottom:calc(20px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:12px;
-  max-height:92vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
-.sheet-head{display:flex;align-items:center;font-size:18px;font-weight:700}
+  max-height:94vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.sheet-head{display:flex;align-items:center;font-size:19px;font-weight:700}
 .sheet-close{margin-left:auto;border:none;background:#f0f2f5;color:var(--sub);
-  width:34px;height:34px;border-radius:50%;font-size:20px;cursor:pointer}
-.sheet textarea{width:100%;border:1.5px solid var(--line);border-radius:14px;padding:13px 14px;
-  font-size:17px;resize:none;outline:none;font-family:inherit;background:#f7f9fb}
+  width:36px;height:36px;border-radius:50%;font-size:22px;cursor:pointer}
+.sheet textarea{width:100%;border:1.5px solid var(--line);border-radius:14px;padding:14px 15px;
+  font-size:18px;resize:none;outline:none;font-family:inherit;background:#f7f9fb}
 .sheet textarea:focus{border-color:var(--teal);background:#fff}
-.sheet input[type=text]{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:12px 14px;
-  font-size:16px;outline:none;background:#f7f9fb}
+.sheet input[type=text]{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:13px 15px;
+  font-size:17px;outline:none;background:#f7f9fb}
 .sheet input[type=text]:focus{border-color:var(--teal);background:#fff}
-.sheet-label{font-size:13px;color:var(--sub);margin-top:2px}
+.sheet input[type=number]{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:13px 15px;
+  font-size:17px;outline:none;background:#f7f9fb}
+.sheet input[type=number]:focus{border-color:var(--teal);background:#fff}
+.sheet-label{font-size:13.5px;color:var(--sub);margin-top:2px}
+
+/* 报价单三栏 */
+.quote-grid{display:flex;gap:10px}
+.q-field{flex:1;display:flex;flex-direction:column;gap:5px}
+.q-field label{font-size:13px;color:var(--sub);font-weight:600;padding-left:2px}
+.q-field input{text-align:right;font-variant-numeric:tabular-nums}
+.quote-hint{font-size:12.5px;color:var(--teal-d);background:#eafaf3;border-radius:8px;
+  padding:6px 10px;min-height:14px}
 
 .preview{background:#eafaf3;border:1px solid #bfe9d8;border-radius:12px;padding:10px 12px;
   font-size:14.5px;color:var(--teal-d);min-height:20px;line-height:1.6}
@@ -112,13 +132,14 @@ a.logout{text-decoration:none}
   padding:1px 8px;margin:2px 4px 2px 0;font-weight:600}
 .preview .pv-amt{font-weight:800}
 
-.cost-pick{display:flex;gap:8px}
-.cp{flex:1;border:1.5px solid var(--line);background:#fff;color:var(--sub);padding:12px 0;
+.cost-pick{display:flex;gap:7px;flex-wrap:wrap}
+.cp{flex:1 1 0;min-width:56px;border:1.5px solid var(--line);background:#fff;color:var(--sub);padding:12px 0;
   border-radius:12px;font-size:15px;font-weight:600;cursor:pointer}
 .cp.active{background:var(--teal);border-color:var(--teal);color:#fff}
 .cost-pick .cp:nth-child(2).active{background:var(--人工);border-color:var(--人工)}
 .cost-pick .cp:nth-child(3).active{background:var(--材料);border-color:var(--材料)}
 .cost-pick .cp:nth-child(4).active{background:var(--机械);border-color:var(--机械)}
+.cost-pick .cp-thing.active{background:#7c3aed;border-color:#7c3aed;color:#fff}
 
 .sheet-btns{display:flex;gap:10px;margin-top:2px}
 .btn-primary{flex:2;border:none;border-radius:14px;padding:15px;font-size:17px;font-weight:700;
@@ -134,6 +155,15 @@ a.logout{text-decoration:none}
 .toast{position:fixed;left:50%;bottom:130px;transform:translateX(-50%);background:rgba(20,30,40,.9);
   color:#fff;padding:11px 20px;border-radius:12px;font-size:15px;z-index:40}
 .toast.hidden{display:none}
+
+/* 图片放大灯箱 */
+.lightbox{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.88);
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.lightbox.hidden{display:none}
+.lightbox img{max-width:100%;max-height:100%;border-radius:8px;object-fit:contain}
+.lightbox-close{position:absolute;top:calc(16px + env(safe-area-inset-top));right:16px;
+  border:none;background:rgba(255,255,255,.18);color:#fff;width:40px;height:40px;border-radius:50%;
+  font-size:24px;cursor:pointer}
 
 /* 登录 */
 .login{position:fixed;inset:0;z-index:50;background:rgba(15,23,42,.6);display:flex;
