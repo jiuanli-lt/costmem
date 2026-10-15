@@ -26,7 +26,7 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "assistant.db")
 PORT = int(os.environ.get("PORT", "8000"))
-VERSION = '1.5.0'  # +报价单字段(工程量/单价/合价) + 类型新增"事情" + 对话框放大
+VERSION = '1.5.1'  # +识别'一单位'口语单价、顿号分条、照片按钮紧凑、输入框加大
 
 # ---- 鉴权配置（云端务必通过环境变量设置）----
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
@@ -201,7 +201,7 @@ UNITS = ['立方米', '立方', 'm³', 'm3', '平方米', '平米', 'm²', 'm2',
          '延米', '千米', '公里', 'km', '米', 'm', '厘米', 'cm', '毫米', 'mm',
          '个', '根', '条', '块', '张', '片', '只', '把', '件', '套', '组', '台',
          '樘', '扇', '座', '处', '项', '次', '遍', '道', '层', '系统', '单元', '标段',
-         '桶', '袋', '卷', '箱', '捆', '车', '罐', '瓶']
+         '桶', '袋', '卷', '箱', '捆', '车', '罐', '瓶', '圈']
 _UNIT_ALT = '|'.join(re.escape(u) for u in sorted(UNITS, key=len, reverse=True))
 # 价格识别：带货币(元/块/￥)，允许数字与货币之间夹"括号注释"如 20（科顺）元；
 # 支持区间价 8-10（取下限数值）。也支持"每/单价单位(/m、/卷)"。
@@ -211,18 +211,21 @@ _PRICE_CORE2 = r'(?<![\d.])(?P<num2>\d+(?:\.\d+)?)(?:\s*-\s*\d+(?:\.\d+)?)?'
 _AMOUNT_RE = re.compile(
     _PRICE_CORE + r'\s*(?:[（(][^）)]*[）)])?\s*(?P<cur>元|块|￥|人民币)\b'
     r'|'
-    + _PRICE_CORE2 + r'\s*(?:[（(][^）)]*[）)])?\s*(?P<per>/|每|单价|per)\s*一?\s*(?P<unit>' + _UNIT_ALT + r')'
+    + _PRICE_CORE2 + r'\s*(?:[（(][^）)]*[）)])?\s*(?P<per>/|每|单价|per|一)\s*(?P<unit>' + _UNIT_ALT + r')'
 )
 # 规格识别：厚度/长宽/管径等，如 1.5mm、3mm厚、10m*1m、厚2mm、Φ110
 _SPEC_RE = re.compile(
-    r'([\d.]+\s*(?:mm|cm|m[m²³]?|平方)?\s*[×x*]\s*[\d.]+\s*(?:mm|cm|m|平方)?'
+    r'([\d.]+\s*(?:mm|cm|m[²³]?|平方)?\s*[×x*]\s*[\d.]+\s*(?:mm|cm|m|平方)?'
     r'|[厚φΦ]\s*[\d.]+\s*(?:mm|cm|m)?'
-    r'|[\d.]+\s*(?:mm|cm|m[m²³]?|平方))\b'
+    r'|[\d.]+\s*(?:mm|cm|m[²³]?|平方)'
+    r'|(?<=[^\s\d.])[\d.]+)\b'
 )
 # 量词（名称末尾的容器/单位词，属于"每X"的X，不是材料名）
 _MEASURE_KW = ['一卷', '一包', '一桶', '一根', '一袋', '一箱', '一捆', '一车', '一台',
                '一套', '一组', '一张', '一块', '一件', '一只', '一个', '一卷', '一樘',
                '一扇', '一座', '一处', '一项', '一次', '一遍', '一道', '一层']
+# 名称/备注里常见的"价格上下文"噪声词（会连续清理）
+_PRICE_NOISE = r'(?:单价|价格|报价|合价|成本|每|一|含税|不含税|国标|非标|税率|税|元|块|人民币|￥)'
 
 # ---- 中文数字 / 大写金额 支持 ----
 _CN_DIGITS = {
@@ -365,8 +368,9 @@ def parse_content(content):
         m = re.search(r'(?<![\d.*/])(?P<num>\d+(?:\.\d+)?)(?![\d.])(?=[\s，,；;。]|$)', norm)
     if not m:
         return None, None
+    num = m.group('num') or m.group('num2')
     try:
-        amount = float(m.group('num'))
+        amount = float(num)
     except (TypeError, ValueError):
         return None, None
     cur = m.groupdict().get('cur')
@@ -397,7 +401,7 @@ def parse_items(content):
     norm = normalize_numbers(content)
     _BARE = re.compile(r'(?<![\d.*/])(?P<num>\d+(?:\.\d+)?)(?![\d.])(?=[\s，,；;。]|$)')
     items = []
-    segs = re.split(r'[；;。\n]', norm)
+    segs = re.split(r'[；;。、\n]', norm)
     for seg in segs:
         seg = seg.strip()
         if not seg:
@@ -410,9 +414,9 @@ def parse_items(content):
                 continue
             ms = [bm]
         seg_prev = 0
-        for m in ms:
+        for idx, m in enumerate(ms):
             gd = m.groupdict()
-            num = gd.get('num')
+            num = gd.get('num') or gd.get('num2')
             cur = gd.get('cur')
             u = gd.get('unit')
             try:
@@ -439,9 +443,31 @@ def parse_items(content):
             spec = ''.join(specs).strip() if specs else ''
             name = _SPEC_RE.sub('', before).strip().rstrip('，,、：:').strip()
             name = re.sub(r'[的一]$', '', name).strip()
-            # 备注：价格之后到段尾
-            after = seg[m.end():].strip().lstrip('，,、：:）。').strip()
-            after = re.sub(r'^(一卷|一包|一桶|一根|一袋|一箱|一捆|一车|一台|一套|一组|一张|一块|一件|一只|一个|一樘|一扇|一座|一处|一项|一次|一遍|一道|一层)[，,、：:]?', '', after).strip()
+            # 连续清理名称末尾的价格上下文噪声词（允许 - / 空格等连接符一起去掉）
+            for _ in range(10):
+                new_name = re.sub(r'[-/\s，,、：:]*' + _PRICE_NOISE + r'[\s，,、：:]*$', '', name).strip()
+                if new_name == name:
+                    break
+                name = new_name
+            name = re.sub(r'^[\s，,、：:]*' + _PRICE_NOISE, '', name).strip()
+            # 备注：价格之后到下一个价格之前（若段内多个价格用逗号连接）
+            next_start = ms[idx + 1].start() if idx + 1 < len(ms) else len(seg)
+            after = seg[m.end():next_start].strip()
+            # 如果 after 去掉标点后是下一个 item 的"名称+量词"，不当作本条备注
+            _tail = after.lstrip('，,、：:。） ').strip()
+            if re.search(r'(?:一卷|一包|一桶|一根|一袋|一箱|一捆|一车|一台|一套|一组|一张|一块|一件|一只|一个|一樘|一扇|一座|一处|一项|一次|一遍|一道|一层)$', _tail):
+                after = ''
+            else:
+                after = after.lstrip('，,、：:）。').strip()
+                # "300元/天" → 单位合并为元/天
+                _ut = re.match(r'^/(?P<u>' + _UNIT_ALT + r')\b', after)
+                if not _ut:
+                    _ut = re.match(r'^每(?P<u>' + _UNIT_ALT + r')\b', after)
+                if _ut:
+                    unit = (unit or '元') + '/' + _ut.group('u')
+                    after = after[_ut.end():].strip().lstrip('，,、：:').strip()
+                after = re.sub(r'^(一卷|一包|一桶|一根|一袋|一箱|一捆|一车|一台|一套|一组|一张|一块|一件|一只|一个|一樘|一扇|一座|一处|一项|一次|一遍|一道|一层)[，,、：:]?', '', after).strip()
+                after = re.sub(r'^' + _PRICE_NOISE + r'[\s，,、：:]*', '', after).strip()
             if not name and not unit:
                 seg_prev = m.end()
                 continue
