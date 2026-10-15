@@ -26,7 +26,7 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "assistant.db")
 PORT = int(os.environ.get("PORT", "8000"))
-VERSION = '1.5.1'  # +识别'一单位'口语单价、顿号分条、照片按钮紧凑、输入框加大
+VERSION = '1.5.2'  # +照片区横排(按钮+缩略图+删除同一行)
 
 # ---- 鉴权配置（云端务必通过环境变量设置）----
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
