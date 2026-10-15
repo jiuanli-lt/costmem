@@ -26,7 +26,7 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "assistant.db")
 PORT = int(os.environ.get("PORT", "8000"))
-VERSION = '1.5.3'  # +规格型号识别增强(电压等级/公称直径/复合截面/强度等级/三维尺寸，参考广材网)
+VERSION = '1.5.4'  # +全专业建筑材料词库扩充(817材料/76人工/100机械)+规格正则增强(钢材牌号/压力等级/功率容量)
 
 # ---- 鉴权配置（云端务必通过环境变量设置）----
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
@@ -230,6 +230,9 @@ _SPEC_RE = re.compile(
     r'|[Φφδ]\s*\d+(?:\.\d+)?'                                              # 直径/厚度符号
     r'|厚\s*\d+(?:\.\d+)?\s*(?:mm|cm|m)?'                                  # 厚20mm
     r'|[CM]\d+(?:\.\d+)?'                                                  # 强度等级 C30/M10
+    r'|(?:HRB|HPB|HRBF|CRB)\d+[E]?|Q\d{2,3}[A-Z]?'                        # 钢材牌号 HRB400E Q235
+    r'|PN\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:MPa|kPa)'                        # 压力等级 PN1.6 1.6MPa
+    r'|\d+(?:\.\d+)?\s*(?:kW|KW|kVA|KVA)'                                 # 功率/容量 15kW 5.5kVA
     r'|\d+\s*[×x*]\s*\d+(?:\s*[+]\s*\d+\s*[×x*]\s*\d+)*'                  # 复合截面
     r'|[\d.]+\s*(?:mm|cm|m[²³]?|平方)?\s*[×x*]\s*[\d.]+\s*(?:mm|cm|m|平方)?'
     r'(?:\s*[×x*]\s*[\d.]+\s*(?:mm|cm|m|平方)?)?'                          # 尺寸组合(二维/三维)
