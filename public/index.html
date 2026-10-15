@@ -54,7 +54,17 @@
         <button id="sheetClose" class="sheet-close" type="button" aria-label="关闭">×</button>
       </div>
 
-      <textarea id="content" rows="4" placeholder="把要记的写这儿，例如：&#10;杂工300元/天，人工&#10;电力电缆5*6 30元/m，材料&#10;挖机150元/小时，机械"></textarea>
+      <div class="sheet-label">照片（可空；也可只拍一张图就保存，事后点开补文字）</div>
+      <div class="photo-row">
+        <button id="photoBtn" class="photo-btn" type="button">拍照 / 选图</button>
+        <input id="photoFile" class="hidden-file" type="file" accept="image/*" capture="environment" />
+        <div id="photoPreview" class="photo-preview hidden">
+          <img id="photoImg" alt="照片预览" />
+          <button id="photoDel" class="photo-del" type="button">删掉照片</button>
+        </div>
+      </div>
+
+      <textarea id="content" rows="4" placeholder="把要记的写这儿，例如：&#10;杂工300元/天，人工&#10;电力电缆5*6 30元/m，材料&#10;挖机150元/小时，机械&#10;（也可先拍照，这里留空）"></textarea>
 
       <div id="preview" class="preview"></div>
 
@@ -69,7 +79,25 @@
         <button data-v="人工" class="cp" type="button">人工</button>
         <button data-v="材料" class="cp" type="button">材料</button>
         <button data-v="机械" class="cp" type="button">机械</button>
+        <button data-v="事情" class="cp cp-thing" type="button">事情</button>
       </div>
+
+      <div class="sheet-label">报价单明细（工程量 × 单价 = 合价；合价会自动算，也可手填）</div>
+      <div class="quote-grid">
+        <div class="q-field">
+          <label>工程量</label>
+          <input id="qtyInput" type="number" inputmode="decimal" step="any" placeholder="如 120" />
+        </div>
+        <div class="q-field">
+          <label>单价</label>
+          <input id="amtInput" type="number" inputmode="decimal" step="any" placeholder="如 230" />
+        </div>
+        <div class="q-field">
+          <label>合价</label>
+          <input id="totInput" type="number" inputmode="decimal" step="any" placeholder="自动算" />
+        </div>
+      </div>
+      <div id="quoteHint" class="quote-hint"></div>
 
       <div class="sheet-label">项目（可空，留空自动从文字里找）</div>
       <input id="projInput" type="text" placeholder="例如：丹江外滩" />
@@ -80,15 +108,8 @@
       <div class="sheet-label">备注 / 工程内容（可空，可写多行）</div>
       <textarea id="noteInput" rows="2" placeholder="例如：含运输、甲供；或粘贴做法说明"></textarea>
 
-      <div class="sheet-label">照片（可空，现场拍材料 / 小票）</div>
-      <div class="photo-row">
-        <button id="photoBtn" class="photo-btn" type="button">拍照 / 选图</button>
-        <input id="photoFile" class="hidden-file" type="file" accept="image/*" capture="environment" />
-        <div id="photoPreview" class="photo-preview hidden">
-          <img id="photoImg" alt="照片预览" />
-          <button id="photoDel" class="photo-del" type="button">删掉照片</button>
-        </div>
-      </div>
+      <div class="sheet-label">价格来源（可空，和备注分开：如 科顺报价单 / 湖北亿启 / 现场询价）</div>
+      <input id="srcInput" type="text" placeholder="例如：科顺2026询价单" />
 
       <div class="sheet-label">价格口径</div>
       <div id="taxPick" class="cost-pick">
@@ -107,6 +128,12 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+
+  <!-- 图片放大灯箱 -->
+  <div id="lightbox" class="lightbox hidden">
+    <img id="lightboxImg" alt="放大查看" />
+    <button id="lightboxClose" class="lightbox-close" type="button" aria-label="关闭">×</button>
+  </div>
 
   <!-- 成本汇总弹层（P2） -->
   <div id="summaryModal" class="sheet-mask hidden">
