@@ -26,7 +26,7 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "assistant.db")
 PORT = int(os.environ.get("PORT", "8000"))
-VERSION = '1.4.0'  # +历史价格对比(P1)+按项目汇总成本(P2)+导出Excel/CSV(P3)+离线查看(P4)+拍照(P5)
+VERSION = '1.5.0'  # +报价单字段(工程量/单价/合价) + 类型新增"事情" + 对话框放大
 
 # ---- 鉴权配置（云端务必通过环境变量设置）----
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
@@ -76,6 +76,10 @@ def init_db():
             photo TEXT,
             amount REAL,
             unit TEXT,
+            quantity REAL,
+            total REAL,
+            items TEXT,
+            price_src TEXT,
             cost_type TEXT,
             source TEXT DEFAULT '文字',
             tags TEXT,
@@ -94,6 +98,10 @@ def init_db():
             photo TEXT,
             amount REAL,
             unit TEXT,
+            quantity REAL,
+            total REAL,
+            items TEXT,
+            price_src TEXT,
             cost_type TEXT,
             source TEXT DEFAULT '文字',
             tags TEXT,
@@ -124,6 +132,22 @@ def init_db():
                         "WHERE table_name='records' AND column_name='photo'")
             if not cur.fetchone():
                 cur.execute("ALTER TABLE records ADD COLUMN photo TEXT")
+            cur.execute("SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name='records' AND column_name='quantity'")
+            if not cur.fetchone():
+                cur.execute("ALTER TABLE records ADD COLUMN quantity REAL")
+            cur.execute("SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name='records' AND column_name='total'")
+            if not cur.fetchone():
+                cur.execute("ALTER TABLE records ADD COLUMN total REAL")
+            cur.execute("SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name='records' AND column_name='items'")
+            if not cur.fetchone():
+                cur.execute("ALTER TABLE records ADD COLUMN items TEXT")
+            cur.execute("SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name='records' AND column_name='price_src'")
+            if not cur.fetchone():
+                cur.execute("ALTER TABLE records ADD COLUMN price_src TEXT")
         else:
             cols = [c[1] for c in conn.execute("PRAGMA table_info(records)")]
             if 'cost_type' not in cols:
@@ -136,6 +160,14 @@ def init_db():
                 conn.execute("ALTER TABLE records ADD COLUMN tax_mode TEXT")
             if 'photo' not in cols:
                 conn.execute("ALTER TABLE records ADD COLUMN photo TEXT")
+            if 'quantity' not in cols:
+                conn.execute("ALTER TABLE records ADD COLUMN quantity REAL")
+            if 'total' not in cols:
+                conn.execute("ALTER TABLE records ADD COLUMN total REAL")
+            if 'items' not in cols:
+                conn.execute("ALTER TABLE records ADD COLUMN items TEXT")
+            if 'price_src' not in cols:
+                conn.execute("ALTER TABLE records ADD COLUMN price_src TEXT")
         conn.commit()
     except Exception:
         pass
@@ -146,8 +178,18 @@ def row_to_dict(r):
     """行 -> dict。photo 体积大，不进普通响应，单独走 /api/photo/<id> 取。"""
     d = dict(r)
     for k in ('content', 'category', 'project', 'feature', 'note', 'tax_mode',
-              'amount', 'unit', 'cost_type', 'source', 'tags', 'created_at', 'updated_at'):
+              'amount', 'unit', 'quantity', 'total', 'items', 'price_src', 'cost_type',
+              'source', 'tags', 'created_at', 'updated_at'):
         d.setdefault(k, None)
+    # items 存的是 JSON 文本，这里反序列化成数组，方便前端直接渲染
+    raw_items = d.get('items')
+    if isinstance(raw_items, str) and raw_items.strip():
+        try:
+            d['items'] = json.loads(raw_items)
+        except Exception:
+            d['items'] = None
+    elif raw_items is None:
+        d['items'] = None
     d.pop('photo', None)
     return d
 
@@ -161,12 +203,26 @@ UNITS = ['立方米', '立方', 'm³', 'm3', '平方米', '平米', 'm²', 'm2',
          '樘', '扇', '座', '处', '项', '次', '遍', '道', '层', '系统', '单元', '标段',
          '桶', '袋', '卷', '箱', '捆', '车', '罐', '瓶']
 _UNIT_ALT = '|'.join(re.escape(u) for u in sorted(UNITS, key=len, reverse=True))
+# 价格识别：带货币(元/块/￥)，允许数字与货币之间夹"括号注释"如 20（科顺）元；
+# 支持区间价 8-10（取下限数值）。也支持"每/单价单位(/m、/卷)"。
+# 排除型号号(1.5mm、5*6、3.2MPa、m3里的3)。
+_PRICE_CORE = r'(?<![\d.])(?P<num>\d+(?:\.\d+)?)(?:\s*-\s*\d+(?:\.\d+)?)?'  # 区间价取首值
+_PRICE_CORE2 = r'(?<![\d.])(?P<num2>\d+(?:\.\d+)?)(?:\s*-\s*\d+(?:\.\d+)?)?'
 _AMOUNT_RE = re.compile(
-    r'(?<![A-Za-z0-9])(?P<num>\d+(?:\.\d+)?)\s*'
-    r'(?P<cur>元|块|￥|人民币)?\s*'
-    r'(?P<per>/|每|per)?\s*一?\s*'  # 口语"350一天"里的"一"不挡单位
-    r'(?P<unit>' + _UNIT_ALT + r')?'
+    _PRICE_CORE + r'\s*(?:[（(][^）)]*[）)])?\s*(?P<cur>元|块|￥|人民币)\b'
+    r'|'
+    + _PRICE_CORE2 + r'\s*(?:[（(][^）)]*[）)])?\s*(?P<per>/|每|单价|per)\s*一?\s*(?P<unit>' + _UNIT_ALT + r')'
 )
+# 规格识别：厚度/长宽/管径等，如 1.5mm、3mm厚、10m*1m、厚2mm、Φ110
+_SPEC_RE = re.compile(
+    r'([\d.]+\s*(?:mm|cm|m[m²³]?|平方)?\s*[×x*]\s*[\d.]+\s*(?:mm|cm|m|平方)?'
+    r'|[厚φΦ]\s*[\d.]+\s*(?:mm|cm|m)?'
+    r'|[\d.]+\s*(?:mm|cm|m[m²³]?|平方))\b'
+)
+# 量词（名称末尾的容器/单位词，属于"每X"的X，不是材料名）
+_MEASURE_KW = ['一卷', '一包', '一桶', '一根', '一袋', '一箱', '一捆', '一车', '一台',
+               '一套', '一组', '一张', '一块', '一件', '一只', '一个', '一卷', '一樘',
+               '一扇', '一座', '一处', '一项', '一次', '一遍', '一道', '一层']
 
 # ---- 中文数字 / 大写金额 支持 ----
 _CN_DIGITS = {
@@ -302,35 +358,103 @@ def detect_cost_type(text):
 
 
 def parse_content(content):
-    amount = None
-    unit = None
+    """解析主单价（兼容旧接口）：返回 (amount, unit)。优先真价格，兜底裸数字。"""
     norm = normalize_numbers(content or '')
-    matches = list(_AMOUNT_RE.finditer(norm))
-    if not matches:
-        return amount, unit
-    # 优先取"带货币(元/块/￥)"的，那才是价格；型号里的数字(如 5*6)不带元，会被忽略。
-    # 若都没有货币，取最后一个数字（如"杂工220"）。
-    best = None
-    for m in matches:
-        if m.group('cur'):
-            best = m
-    if best is None:
-        best = matches[-1]
+    m = _AMOUNT_RE.search(norm)
+    if not m:  # 兜底：末尾裸数字（杂工220）
+        m = re.search(r'(?<![\d.*/])(?P<num>\d+(?:\.\d+)?)(?![\d.])(?=[\s，,；;。]|$)', norm)
+    if not m:
+        return None, None
     try:
-        amount = float(best.group('num'))
+        amount = float(m.group('num'))
     except (TypeError, ValueError):
         return None, None
-    cur = best.group('cur')
-    per = best.group('per')
-    u = best.group('unit')
-    parts = []
-    if cur or u:  # 有货币或单位 → 构造成"元/单位"的单价格式
-        parts.append(cur or '元')
-        if u:
-            parts.append('/')
-            parts.append(u)
-    unit = ''.join(parts) if parts else None
+    cur = m.groupdict().get('cur')
+    u = m.groupdict().get('unit')
+    if cur and u:
+        unit = cur + '/' + u
+    elif cur:
+        unit = cur
+    elif u:
+        unit = '元/' + u
+    else:
+        unit = None
     return amount, unit
+
+
+def parse_items(content):
+    """把一条内容拆成多个价格项，尽量拆出 材料名 / 规格 / 单位 / 备注。
+    例：'双面防皱自粘聚合物改性沥青防水卷材1.5mm，一卷，145.8元；
+         防水胶一包7.5元，聚合物沥青防水涂料一桶302.4元'
+    → [{name:'双面防皱自粘聚合物改性沥青防水卷材', spec:'1.5mm',
+        amount:145.8, unit:'元/卷', note:''}, ...]
+    价格优先认：带货币(元/块/￥) / 每+单价单位(/m、/卷)。
+    若整段无任何带货币价格，才退回取末尾裸数字(如 杂工220)。
+    坚决排除型号号(1.5mm、5*6、3.2MPa、m3里的3)。
+    """
+    if not content:
+        return []
+    norm = normalize_numbers(content)
+    _BARE = re.compile(r'(?<![\d.*/])(?P<num>\d+(?:\.\d+)?)(?![\d.])(?=[\s，,；;。]|$)')
+    items = []
+    segs = re.split(r'[；;。\n]', norm)
+    for seg in segs:
+        seg = seg.strip()
+        if not seg:
+            continue
+        ms = list(_AMOUNT_RE.finditer(seg))
+        if not ms:
+            # 兜底：本段末尾裸数字（杂工220）
+            bm = _BARE.search(seg)
+            if not bm:
+                continue
+            ms = [bm]
+        seg_prev = 0
+        for m in ms:
+            gd = m.groupdict()
+            num = gd.get('num')
+            cur = gd.get('cur')
+            u = gd.get('unit')
+            try:
+                amount = float(num)
+            except (TypeError, ValueError):
+                seg_prev = m.end()
+                continue
+            if cur and u:
+                unit = cur + '/' + u
+            elif cur:
+                unit = cur
+            elif u:
+                unit = '元/' + u
+            else:
+                unit = None
+            before = seg[seg_prev:m.start()].strip().lstrip('，,、：:；;').strip()
+            # 量词(一卷/一包) → 并入单位
+            mq = re.search(r'(一卷|一包|一桶|一根|一袋|一箱|一捆|一车|一台|一套|一组|一张|一块|一件|一只|一个|一樘|一扇|一座|一处|一项|一次|一遍|一道|一层)\s*[，,、：:]?', before)
+            if mq:
+                measure = mq.group(1)[1:]
+                unit = (unit.split('/')[0] if unit else '元') + '/' + measure
+                before = before[:mq.start()] + before[mq.end():]
+            specs = _SPEC_RE.findall(before)
+            spec = ''.join(specs).strip() if specs else ''
+            name = _SPEC_RE.sub('', before).strip().rstrip('，,、：:').strip()
+            name = re.sub(r'[的一]$', '', name).strip()
+            # 备注：价格之后到段尾
+            after = seg[m.end():].strip().lstrip('，,、：:）。').strip()
+            after = re.sub(r'^(一卷|一包|一桶|一根|一袋|一箱|一捆|一车|一台|一套|一组|一张|一块|一件|一只|一个|一樘|一扇|一座|一处|一项|一次|一遍|一道|一层)[，,、：:]?', '', after).strip()
+            if not name and not unit:
+                seg_prev = m.end()
+                continue
+            items.append({
+                'name': name,
+                'spec': spec,
+                'amount': amount,
+                'unit': unit,
+                'note': after,
+                'has_cur': bool(cur),
+            })
+            seg_prev = m.end()
+    return items
 
 
 def find_project(text):
@@ -343,21 +467,39 @@ def find_project(text):
     return None
 
 
-def build_record(content, project=None, category=None, cost_type=None, source='文字'):
+def build_record(content, project=None, category=None, cost_type=None, source='文字',
+                 quantity=None, total=None):
     content = (content or '').strip()
     amount, unit = parse_content(content)
     if category is None or category not in ('单价费用', '事项', '备忘'):
         category = detect_category(content, amount)
     if not project:
         project = find_project(content)
-    if not cost_type or cost_type not in ('人工', '材料', '机械'):
+    if not cost_type or cost_type not in ('人工', '材料', '机械', '事情'):
         cost_type = detect_cost_type(content)
+    # 合价：已显式给则用之；否则工程量×单价自动算（向下取整2位）
+    computed_total = None
+    try:
+        q = float(quantity) if quantity not in (None, '') else None
+    except (TypeError, ValueError):
+        q = None
+    if total not in (None, ''):
+        try:
+            computed_total = round(float(total), 2)
+        except (TypeError, ValueError):
+            computed_total = None
+    elif q is not None and amount is not None:
+        computed_total = round(q * amount, 2)
+    items = parse_items(content) if content else None
     return {
         'content': content,
         'category': category,
         'project': project,
         'amount': amount,
         'unit': unit,
+        'quantity': q,
+        'total': computed_total,
+        'items': json.dumps(items, ensure_ascii=False) if items else None,
         'cost_type': cost_type,
         'source': source,
         'tags': project or '',
@@ -548,8 +690,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             conn = get_conn()
             cur = conn.cursor()
             sql = ("SELECT id, content, category, project, feature, note, tax_mode, amount, unit, "
-                   "cost_type, source, tags, created_at, updated_at, "
-                   "(photo IS NOT NULL AND photo != '') AS has_photo FROM records WHERE 1=1")
+                   "quantity, total, items, price_src, cost_type, source, tags, created_at, "
+                   "updated_at, (photo IS NOT NULL AND photo != '') AS has_photo FROM records WHERE 1=1")
             args = []
             if q:
                 like = f'%{q}%'
@@ -602,7 +744,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # 按 项目 × 人材机 汇总金额（P2，仅统计有金额的单价记录）
             conn = get_conn()
             cur = conn.cursor()
-            cur.execute("SELECT project, cost_type, COUNT(*) n, SUM(amount) s "
+            cur.execute("SELECT project, cost_type, COUNT(*) n, SUM(amount) s, "
+                        "SUM(quantity) q, SUM(total) t "
                         "FROM records WHERE amount IS NOT NULL "
                         "GROUP BY project, cost_type ORDER BY project")
             out = {}
@@ -610,7 +753,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 proj = r['project'] or '未填项目'
                 ct = r['cost_type'] or '未分类'
                 out.setdefault(proj, {})[ct] = {
-                    'count': r['n'], 'total': round(float(r['s'] or 0), 2)}
+                    'count': r['n'], 'total': round(float(r['s'] or 0), 2),
+                    'qty': round(float(r['q'] or 0), 2),
+                    'sum_total': round(float(r['t'] or 0), 2)}
             conn.close()
             return self._send_json(out)
 
@@ -667,15 +812,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         conn.close()
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(['序号', '内容', '分类', '项目', '项目特征', '备注', '价格口径',
-                    '金额', '单位', '人材机', '来源', '记录时间'])
+        w.writerow(['序号', '内容', '分类', '项目', '项目特征', '备注', '价格来源', '价格口径',
+                    '单价', '单位', '工程量', '合价', '明细(多项)', '人材机', '来源', '记录时间'])
         for r in rows:
+            items = r.get('items')
+            if isinstance(items, str) and items.strip():
+                try:
+                    items = json.loads(items)
+                except Exception:
+                    items = None
+            items_txt = ''
+            if isinstance(items, list):
+                items_txt = ' | '.join(
+                    f"{it.get('name','')}{it.get('amount','')}{it.get('unit','')}"
+                    for it in items if isinstance(it, dict))
             w.writerow([
                 r.get('id'), r.get('content') or '', r.get('category') or '',
                 r.get('project') or '', r.get('feature') or '', r.get('note') or '',
-                r.get('tax_mode') or '',
+                r.get('tax_mode') or '', r.get('price_src') or '',
                 '' if r.get('amount') is None else r.get('amount'),
-                r.get('unit') or '', r.get('cost_type') or '', r.get('source') or '',
+                r.get('unit') or '',
+                '' if r.get('quantity') is None else r.get('quantity'),
+                '' if r.get('total') is None else r.get('total'),
+                items_txt,
+                r.get('cost_type') or '', r.get('source') or '',
                 r.get('created_at') or '',
             ])
         data = ('\ufeff' + buf.getvalue()).encode('utf-8')  # BOM：让 Excel 正确识别中文
@@ -721,6 +881,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             category=body.get('category') or None,
             cost_type=body.get('cost_type') or None,
             source=body.get('source') or '文字',
+            quantity=body.get('quantity'),
+            total=body.get('total'),
         )
         return self._send_json(rec)
 
@@ -732,24 +894,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             category=body.get('category') or None,
             cost_type=body.get('cost_type') or None,
             source=body.get('source') or '文字',
+            quantity=body.get('quantity'),
+            total=body.get('total'),
         )
         feature = (body.get('feature') or '').strip() or None
         note = (body.get('note') or '').strip() or None
         tax_mode = body.get('tax_mode') or None
+        price_src = (body.get('price_src') or '').strip() or None
         photo = body.get('photo') or None
-        if not rec['content']:
-            return self._send_json({'error': '内容不能为空'}, status=400)
+        if not rec['content'] and not photo:
+            return self._send_json({'error': '内容和照片不能都为空'}, status=400)
         ts = now_iso()
         conn = get_conn()
         cur = conn.cursor()
         col_list = ["content", "category", "project", "feature", "note", "tax_mode",
-                    "amount", "unit", "cost_type", "source", "tags", "photo",
-                    "created_at", "updated_at"]
+                    "amount", "unit", "quantity", "total", "items", "price_src",
+                    "cost_type", "source", "tags", "photo", "created_at", "updated_at"]
         cols = ', '.join(col_list)
         phs = ', '.join([PH] * len(col_list))  # 占位符数量随列数自动生成，防个数不匹配
         vals = (rec['content'], rec['category'], rec['project'], feature, note, tax_mode,
-                rec['amount'], rec['unit'], rec['cost_type'], rec['source'], rec['tags'],
-                photo, ts, ts)
+                rec['amount'], rec['unit'], rec['quantity'], rec['total'], rec['items'],
+                price_src, rec['cost_type'], rec['source'], rec['tags'], photo, ts, ts)
         if USE_PG:
             cur.execute(f"""INSERT INTO records ({cols}) VALUES ({phs}) RETURNING id""", vals)
             rid = cur.fetchone()['id']
@@ -769,7 +934,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not isinstance(rows, list) or not rows:
             return self._send_json({'error': '没有可导入的数据'}, status=400)
         col_list = ["content", "category", "project", "feature", "note", "tax_mode",
-                    "amount", "unit", "cost_type", "source", "tags", "created_at", "updated_at"]
+                    "amount", "unit", "quantity", "total", "items", "price_src",
+                    "cost_type", "source", "tags", "created_at", "updated_at"]
         cols = ', '.join(col_list)
         phs = ', '.join([PH] * len(col_list))
         conn = get_conn()
@@ -788,6 +954,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 category=r.get('category') or None,
                 cost_type=r.get('cost_type') or None,
                 source=r.get('source') or '导入',
+                quantity=r.get('quantity'),
+                total=r.get('total'),
             )
             # 导入时可直接指定金额/单位（区间价如"8-10"更准），没给就用自动解析值
             if r.get('amount') is not None:
@@ -797,13 +965,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     pass
             if (r.get('unit') or '').strip():
                 rec['unit'] = r['unit'].strip()
+            ps = (r.get('price_src') or '').strip() or None
             cur.execute(f"INSERT INTO records ({cols}) VALUES ({phs})", (
                 rec['content'], rec['category'], rec['project'],
                 (r.get('feature') or '').strip() or None,
                 (r.get('note') or '').strip() or None,
                 r.get('tax_mode') or None,
-                rec['amount'], rec['unit'], rec['cost_type'], rec['source'],
-                rec['tags'], ts, ts,
+                rec['amount'], rec['unit'], rec['quantity'], rec['total'], rec['items'], ps,
+                rec['cost_type'], rec['source'], rec['tags'], ts, ts,
             ))
             ok += 1
         conn.commit()
@@ -827,15 +996,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
         note = body.get('note', row['note'])
         tax_mode = body.get('tax_mode', row['tax_mode'])
         photo = body.get('photo', row['photo'])
+        price_src = body.get('price_src', row['price_src'] if 'price_src' in dict(row) else None)
+        quantity = body.get('quantity', row['quantity'] if 'quantity' in dict(row) else None)
+        total = body.get('total', row['total'] if 'total' in dict(row) else None)
         rec = build_record(content, project=project, category=category,
-                           cost_type=cost_type, source=row['source'])
+                           cost_type=cost_type, source=row['source'],
+                           quantity=quantity, total=total)
+        # 若前端显式传了 items（如手动改明细），以之覆盖自动解析
+        items_in = body.get('items')
+        if isinstance(items_in, list):
+            rec['items'] = json.dumps(items_in, ensure_ascii=False)
+        elif 'items' in dict(row):
+            rec['items'] = row['items']
         ts = now_iso()
         cur.execute(
             f"""UPDATE records SET content={PH}, category={PH}, project={PH}, feature={PH},
-               note={PH}, tax_mode={PH}, photo={PH}, amount={PH}, unit={PH}, cost_type={PH},
-               tags={PH}, updated_at={PH} WHERE id={PH}""",
+               note={PH}, tax_mode={PH}, photo={PH}, amount={PH}, unit={PH}, quantity={PH},
+               total={PH}, items={PH}, price_src={PH}, cost_type={PH}, tags={PH}, updated_at={PH} WHERE id={PH}""",
             (rec['content'], rec['category'], rec['project'], feature, note, tax_mode, photo,
-             rec['amount'], rec['unit'], rec['cost_type'], rec['tags'], ts, rid),
+             rec['amount'], rec['unit'], rec['quantity'], rec['total'], rec['items'],
+             price_src, rec['cost_type'], rec['tags'], ts, rid),
         )
         cur.execute(f"SELECT * FROM records WHERE id={PH}", (rid,))
         row = row_to_dict(cur.fetchone())
