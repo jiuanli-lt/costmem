@@ -2,7 +2,7 @@
 //  - 有网时所有资源都走网络，保证「一更新就生效」；断网时回退缓存（工地可只读查看）
 //  - 记录/汇总/历史/图片同样网络优先、断网回退缓存
 //  - 写操作永远走网络
-const CACHE = 'costmem-v4';
+const CACHE = 'costmem-v5';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', (e) => {
