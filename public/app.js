@@ -64,26 +64,51 @@ function renderList(rows) {
   list.innerHTML = rows.map(r => {
     const amt = (r.amount != null)
       ? `<span class="amount">${r.amount}<small> ${r.unit || ''}</small></span>` : '';
+    const tot = (r.total != null)
+      ? `<span class="amount amount-total">合价 ${r.total}</span>` : '';
+    // 一条记录里识别出的多个价格项
+    let itemsHtml = '';
+    if (Array.isArray(r.items) && r.items.length) {
+      itemsHtml = '<div class="card-items">' + r.items.map(it => {
+        const nm = (it.name || '').replace(/</g, '&lt;');
+        const u = it.unit || '';
+        return `<div class="ci"><span class="ci-n">${escapeHtml(nm)}</span>`
+          + `<span class="ci-p">${it.amount}${escapeHtml(u)}</span></div>`;
+      }).join('') + '</div>';
+    }
     const meta = [];
     if (r.source) meta.push('来源·' + r.source);
     if (r.created_at) meta.push(r.created_at);
+    const ctBadge = r.cost_type === '事情'
+      ? badge(r.cost_type, 'b-thing')
+      : (r.cost_type ? badge(r.cost_type, 'b-' + r.cost_type) : '');
     return `<div class="card" data-id="${r.id}">
       <div class="card-top">
-        ${r.cost_type ? badge(r.cost_type, 'b-' + r.cost_type) : ''}
-        ${(r.category === '事项' || r.category === '备忘') && !r.cost_type ? badge(r.category, 'b-thing') : ''}
+        ${ctBadge}
+        ${!r.cost_type && (r.category === '事项' || r.category === '备忘') ? badge(r.category, 'b-thing') : ''}
         ${r.project ? badge(r.project, 'b-proj') : ''}
         ${r.feature ? badge(r.feature, 'b-feat') : ''}
         ${r.tax_mode && r.tax_mode !== '未标' ? badge(r.tax_mode, 'b-tax') : ''}
+        ${r.price_src ? badge(r.price_src, 'b-src') : ''}
         ${amt}
+        ${tot}
       </div>
       <div class="card-content">${escapeHtml(r.content)}</div>
       ${r.has_photo ? `<img class="thumb" src="/api/photo/${r.id}" alt="照片" loading="lazy">` : ''}
+      ${itemsHtml}
       ${r.note ? `<div class="card-note">备注：${escapeHtml(r.note)}</div>` : ''}
       <div class="card-meta">${meta.map(escapeHtml).join(' · ')}</div>
     </div>`;
   }).join('');
   list.querySelectorAll('.card').forEach(el => {
-    el.onclick = () => openEdit(Number(el.dataset.id));
+    el.onclick = (e) => {
+      // 点图片放大，不进编辑
+      if (e.target.classList && e.target.classList.contains('thumb')) {
+        openLightbox(e.target.src);
+        return;
+      }
+      openEdit(Number(el.dataset.id));
+    };
   });
 }
 
@@ -113,18 +138,27 @@ function renderPreview(rec) {
   const parts = [];
   if (rec.cost_type) {
     const c = CTYPE_COLOR[rec.cost_type] || 'var(--teal)';
-    parts.push(`<span class="pv-tag" style="color:${c};border-color:${c}">${rec.cost_type}</span>`);
+    const isThing = rec.cost_type === '事情';
+    parts.push(`<span class="pv-tag" style="${isThing ? 'color:#5b21b6;border-color:#c4b5fd' : 'color:' + c + ';border-color:' + c}">${rec.cost_type}</span>`);
   }
   if ((rec.category === '事项' || rec.category === '备忘') && !rec.cost_type) {
     parts.push(`<span class="pv-tag">${rec.category}</span>`);
   }
   if (rec.project) parts.push(`<span class="pv-tag">项目：${escapeHtml(rec.project)}</span>`);
-  if (rec.amount != null) parts.push(`<span class="pv-amt">${rec.amount}${rec.unit || ''}</span>`);
+  if (rec.amount != null) parts.push(`<span class="pv-amt">单价 ${rec.amount}${rec.unit || ''}</span>`);
+  if (rec.quantity != null) parts.push(`<span class="pv-amt">工程量 ${rec.quantity}</span>`);
+  if (rec.total != null) parts.push(`<span class="pv-amt">合价 ${rec.total}</span>`);
   if (!parts.length) {
     el.innerHTML = '<span style="color:var(--sub)">写下内容，这里会实时显示我帮你认出的类型</span>';
     return;
   }
-  el.innerHTML = '我帮你认成：' + parts.join('');
+  let html = '我帮你认成：' + parts.join('');
+  if (Array.isArray(rec.items) && rec.items.length > 1) {
+    html += '<div class="pv-items">' + rec.items.map(it =>
+      `<div class="pvi">${escapeHtml(it.name || '')} ${it.amount}${escapeHtml(it.unit || '')}</div>`
+    ).join('') + '</div>';
+  }
+  el.innerHTML = html;
 }
 
 let _pvTimer;
@@ -134,8 +168,12 @@ function runPreview() {
     const content = $('#content').value.trim();
     if (!content) { renderPreview(null); return; }
     const pick = getCostPick($('#costPick'));
+    const q = getNum('qtyInput'), a = getNum('amtInput'), t = getNum('totInput');
     try {
-      const rec = await api('POST', '/api/parse', { content, cost_type: pick, project: $('#projInput').value.trim() || null });
+      const rec = await api('POST', '/api/parse', {
+        content, cost_type: pick, project: $('#projInput').value.trim() || null,
+        quantity: q, total: t
+      });
       renderPreview(rec);
       loadHistory(content);
     } catch (e) { /* ignore */ }
@@ -159,6 +197,31 @@ function bindCostPick(container) {
   });
 }
 
+// ---- 报价单字段：工程量 × 单价 = 合价（自动算，可手填）----
+function getNum(id) {
+  const v = $('#' + id).value.trim();
+  if (v === '') return null;
+  const n = parseFloat(v);
+  return isNaN(n) ? null : n;
+}
+function calcTotal() {
+  const q = getNum('qtyInput');
+  const a = getNum('amtInput');
+  const tEl = $('#totInput');
+  const hint = $('#quoteHint');
+  // 用户没手动填合价时，自动算
+  if (tEl.value.trim() === '' && q != null && a != null) {
+    const t = Math.round(q * a * 100) / 100;
+    tEl.placeholder = '自动 ' + t;
+    hint.textContent = `合价自动算：${q} × ${a} = ${t}`;
+  } else if (q != null && a != null && tEl.value.trim() !== '') {
+    hint.textContent = `合价 = 工程量 × 单价，可手填覆盖`;
+  } else {
+    tEl.placeholder = '自动算';
+    hint.textContent = '';
+  }
+}
+
 // ---- 录入 / 编辑 弹层 ----
 function openCreate() {
   state.editingId = null;
@@ -167,6 +230,12 @@ function openCreate() {
   $('#projInput').value = '';
   $('#featInput').value = '';
   $('#noteInput').value = '';
+  $('#srcInput').value = '';
+  $('#qtyInput').value = '';
+  $('#amtInput').value = '';
+  $('#totInput').value = '';
+  $('#totInput').placeholder = '自动算';
+  $('#quoteHint').textContent = '';
   state.photo = undefined;
   renderPhoto(null);
   hideHistory();
@@ -188,6 +257,12 @@ async function openEdit(id) {
   $('#projInput').value = r.project || '';
   $('#featInput').value = r.feature || '';
   $('#noteInput').value = r.note || '';
+  $('#srcInput').value = r.price_src || '';
+  $('#qtyInput').value = (r.quantity != null) ? r.quantity : '';
+  $('#amtInput').value = (r.amount != null) ? r.amount : '';
+  $('#totInput').value = (r.total != null) ? r.total : '';
+  $('#totInput').placeholder = '自动算';
+  $('#quoteHint').textContent = '';
   state.photo = undefined;
   renderPhoto(r.has_photo ? ('/api/photo/' + id) : null);
   setCostPick($('#taxPick'), r.tax_mode || '未标');
@@ -202,13 +277,21 @@ function closeSheet() { $('#sheet').classList.add('hidden'); }
 
 async function saveRecord() {
   const content = $('#content').value.trim();
-  if (!content) { toast('先写点内容'); return; }
+  // 内容可空，但至少要有照片（state.photo 为 null/undefined/'' 时视为没图）
+  const hasPhoto = state.photo && state.photo !== 'delete';
+  if (!content && !hasPhoto) { toast('写点内容，或先拍一张图'); return; }
   const project = $('#projInput').value.trim() || null;
   const cost_type = getCostPick($('#costPick'));
   const feature = $('#featInput').value.trim() || null;
   const note = $('#noteInput').value.trim() || null;
+  const price_src = $('#srcInput').value.trim() || null;
   const tax_mode = getCostPick($('#taxPick'));
-  const payload = { content, project, feature, note, tax_mode, cost_type };
+  const payload = { content, project, feature, note, price_src, tax_mode, cost_type };
+  // 报价单字段
+  const q = getNum('qtyInput'), a = getNum('amtInput'), t = getNum('totInput');
+  if (q != null) payload.quantity = q;
+  if (a != null) payload.amount = a;
+  if (t != null) payload.total = t;
   if (state.photo !== undefined) payload.photo = state.photo;
   try {
     if (state.editingId) {
@@ -301,6 +384,13 @@ async function loadHistory(content) {
 
 function hideHistory() { $('#historyBox').classList.add('hidden'); }
 
+// ---- 图片放大灯箱 ----
+function openLightbox(src) {
+  $('#lightboxImg').src = src;
+  $('#lightbox').classList.remove('hidden');
+}
+function closeLightbox() { $('#lightbox').classList.add('hidden'); $('#lightboxImg').removeAttribute('src'); }
+
 async function doSummary() {
   $('#summaryModal').classList.remove('hidden');
   $('#summaryBody').innerHTML = '<div class="empty">统计中…</div>';
@@ -314,12 +404,14 @@ async function doSummary() {
       let sum = 0, cnt = 0;
       const rowsHtml = Object.keys(byType).map(t => {
         const d = byType[t];
-        sum += d.total; cnt += d.count;
-        return `<tr><td>${escapeHtml(t)}</td><td>${d.count} 条</td><td class="num">${d.total}</td></tr>`;
+        sum += d.sum_total; cnt += d.count;
+        return `<tr><td>${escapeHtml(t)}</td><td>${d.count} 条</td>`
+          + `<td class="num">${d.total || 0}</td>`
+          + `<td class="num">${d.sum_total || 0}</td></tr>`;
       }).join('');
       html += `<div class="sum-block"><div class="sum-proj">${escapeHtml(p)}</div>`
-        + `<table class="sum-table"><tr><th>类别</th><th>条数</th><th class="num">合计</th></tr>`
-        + rowsHtml + `<tr class="sum-total"><td>合计</td><td>${cnt} 条</td><td class="num">${Math.round(sum * 100) / 100}</td></tr></table></div>`;
+        + `<table class="sum-table"><tr><th>类别</th><th>条数</th><th class="num">单价合计</th><th class="num">合价合计</th></tr>`
+        + rowsHtml + `<tr class="sum-total"><td>合计</td><td>${cnt} 条</td><td class="num">—</td><td class="num">${Math.round(sum * 100) / 100}</td></tr></table></div>`;
     }
     $('#summaryBody').innerHTML = html;
   } catch (e) {
@@ -368,6 +460,8 @@ function init() {
   $('#sheetClose').addEventListener('click', closeSheet);
   $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
   $('#save').addEventListener('click', saveRecord);
+  ['qtyInput', 'amtInput', 'totInput'].forEach(id =>
+    $('#' + id).addEventListener('input', calcTotal));
   $('#delete').addEventListener('click', deleteRecord);
   $('#summaryBtn').addEventListener('click', doSummary);
   $('#summaryClose').addEventListener('click', () => $('#summaryModal').classList.add('hidden'));
@@ -379,6 +473,8 @@ function init() {
     e.target.value = '';
   });
   $('#photoDel').addEventListener('click', () => { state.photo = null; renderPhoto(null); });
+  $('#lightbox').addEventListener('click', (e) => { if (e.target.id === 'lightbox') closeLightbox(); });
+  $('#lightboxClose').addEventListener('click', closeLightbox);
   $('#importBtn').addEventListener('click', () => $('#importFile').click());
   $('#importFile').addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0];
