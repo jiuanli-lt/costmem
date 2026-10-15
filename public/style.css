@@ -66,7 +66,7 @@ a.logout{text-decoration:none}
 .hidden-file{display:none}
 .thumb{margin-top:8px;max-width:100%;max-height:180px;border-radius:10px;display:block;border:1px solid var(--line)}
 .photo-row{display:flex;flex-direction:column;gap:8px}
-.photo-btn{align-self:flex-start;border:1px dashed var(--line);background:#fff;color:var(--teal-d);font-size:14px;padding:8px 14px;border-radius:10px;cursor:pointer}
+.photo-btn{align-self:flex-start;border:1px dashed var(--line);background:#fff;color:var(--teal-d);font-size:14px;padding:7px 12px;border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
 .photo-preview{align-self:flex-start}
 .photo-preview img{max-width:100%;max-height:220px;border-radius:10px;border:1px solid var(--line);display:block}
 .photo-del{margin-top:6px;border:1px solid #f0c4c4;background:#fff;color:#c0392b;font-size:13px;padding:5px 12px;border-radius:9px;cursor:pointer}
@@ -108,7 +108,7 @@ a.logout{text-decoration:none}
 .sheet-close{margin-left:auto;border:none;background:#f0f2f5;color:var(--sub);
   width:36px;height:36px;border-radius:50%;font-size:22px;cursor:pointer}
 .sheet textarea{width:100%;border:1.5px solid var(--line);border-radius:14px;padding:14px 15px;
-  font-size:18px;resize:none;outline:none;font-family:inherit;background:#f7f9fb}
+  font-size:18px;resize:none;outline:none;font-family:inherit;background:#f7f9fb;min-height:130px}
 .sheet textarea:focus{border-color:var(--teal);background:#fff}
 .sheet input[type=text]{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:13px 15px;
   font-size:17px;outline:none;background:#f7f9fb}
