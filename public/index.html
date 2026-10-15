@@ -18,6 +18,8 @@
         <div class="title">造价个人助手</div>
         <div class="subtitle"><span id="count">共 0 条</span> · 记单价 · 记事情 · 随时回忆</div>
       </div>
+      <button id="summaryBtn" class="logout" type="button">汇总</button>
+      <a id="exportCsv" class="logout" href="/api/export.csv" download>表格</a>
       <a id="exportBtn" class="logout" href="/api/export" download>备份</a>
       <button id="importBtn" class="logout" type="button">导入</button>
       <input id="importFile" class="hidden-file" type="file" accept=".json,application/json" />
@@ -53,6 +55,11 @@
 
       <div id="preview" class="preview"></div>
 
+      <div id="historyBox" class="history-box hidden">
+        <div class="history-title">以前记过的同类价格</div>
+        <div id="historyList" class="history-list"></div>
+      </div>
+
       <div class="sheet-label">类型（点一下切换，认错了就改）</div>
       <div id="costPick" class="cost-pick">
         <button data-v="自动" class="cp active" type="button">自动识别</button>
@@ -69,6 +76,16 @@
 
       <div class="sheet-label">备注（可空）</div>
       <input id="noteInput" type="text" placeholder="例如：含运输、甲供、暂定量" />
+
+      <div class="sheet-label">照片（可空，现场拍材料 / 小票）</div>
+      <div class="photo-row">
+        <button id="photoBtn" class="photo-btn" type="button">拍照 / 选图</button>
+        <input id="photoFile" class="hidden-file" type="file" accept="image/*" capture="environment" />
+        <div id="photoPreview" class="photo-preview hidden">
+          <img id="photoImg" alt="照片预览" />
+          <button id="photoDel" class="photo-del" type="button">删掉照片</button>
+        </div>
+      </div>
 
       <div class="sheet-label">价格口径</div>
       <div id="taxPick" class="cost-pick">
@@ -87,6 +104,17 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+
+  <!-- 成本汇总弹层（P2） -->
+  <div id="summaryModal" class="sheet-mask hidden">
+    <div class="sheet">
+      <div class="sheet-head">
+        <span>成本汇总（按项目 · 人材机）</span>
+        <button id="summaryClose" class="sheet-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div id="summaryBody" class="summary-body"></div>
+    </div>
+  </div>
 
   <!-- 登录遮罩 -->
   <div id="login" class="login hidden">
