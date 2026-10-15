@@ -1,6 +1,6 @@
 'use strict';
 
-const state = { q: '', cost_type: '', category: '', editingId: null };
+const state = { q: '', cost_type: '', category: '', editingId: null, photo: undefined };
 const $ = (s) => document.querySelector(s);
 
 async function api(method, path, body) {
@@ -77,6 +77,7 @@ function renderList(rows) {
         ${amt}
       </div>
       <div class="card-content">${escapeHtml(r.content)}</div>
+      ${r.has_photo ? `<img class="thumb" src="/api/photo/${r.id}" alt="照片" loading="lazy">` : ''}
       ${r.note ? `<div class="card-note">备注：${escapeHtml(r.note)}</div>` : ''}
       <div class="card-meta">${meta.map(escapeHtml).join(' · ')}</div>
     </div>`;
@@ -136,6 +137,7 @@ function runPreview() {
     try {
       const rec = await api('POST', '/api/parse', { content, cost_type: pick, project: $('#projInput').value.trim() || null });
       renderPreview(rec);
+      loadHistory(content);
     } catch (e) { /* ignore */ }
   }, 250);
 }
@@ -165,6 +167,9 @@ function openCreate() {
   $('#projInput').value = '';
   $('#featInput').value = '';
   $('#noteInput').value = '';
+  state.photo = undefined;
+  renderPhoto(null);
+  hideHistory();
   setCostPick($('#costPick'), '自动');
   setCostPick($('#taxPick'), '未标');
   $('#delete').classList.add('hidden');
@@ -183,10 +188,13 @@ async function openEdit(id) {
   $('#projInput').value = r.project || '';
   $('#featInput').value = r.feature || '';
   $('#noteInput').value = r.note || '';
+  state.photo = undefined;
+  renderPhoto(r.has_photo ? ('/api/photo/' + id) : null);
   setCostPick($('#taxPick'), r.tax_mode || '未标');
   setCostPick($('#costPick'), r.cost_type || '自动');
   $('#delete').classList.remove('hidden');
   renderPreview(r);
+  loadHistory(r.content);
   $('#sheet').classList.remove('hidden');
 }
 
@@ -201,6 +209,7 @@ async function saveRecord() {
   const note = $('#noteInput').value.trim() || null;
   const tax_mode = getCostPick($('#taxPick'));
   const payload = { content, project, feature, note, tax_mode, cost_type };
+  if (state.photo !== undefined) payload.photo = state.photo;
   try {
     if (state.editingId) {
       await api('PUT', '/api/records/' + state.editingId, payload);
@@ -237,6 +246,85 @@ async function doImport(file) {
     closeSheet();
     await refreshAll();
   } catch (e) { toast('导入失败：文件格式不对'); }
+}
+
+// ---- 照片 / 历史价格 / 成本汇总（P1 P2 P5）----
+function renderPhoto(src) {
+  const box = $('#photoPreview');
+  const img = $('#photoImg');
+  if (src) { img.src = src; box.classList.remove('hidden'); }
+  else { img.removeAttribute('src'); box.classList.add('hidden'); }
+}
+
+function compressImage(file, maxW, quality, cb) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width);
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      cb(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => cb(null);
+    img.src = e.target.result;
+  };
+  reader.onerror = () => cb(null);
+  reader.readAsDataURL(file);
+}
+
+function nameKey(content) {
+  const s = (content || '').split(/[，,]/)[0].trim();
+  return s.length >= 2 ? s : (content || '').slice(0, 8);
+}
+
+async function loadHistory(content) {
+  const box = $('#historyBox');
+  const key = nameKey(content);
+  if (!key) { box.classList.add('hidden'); return; }
+  try {
+    const rows = await api('GET', '/api/history?q=' + encodeURIComponent(key));
+    const list = state.editingId ? rows.filter(x => x.id !== state.editingId) : rows;
+    if (!list.length) { box.classList.add('hidden'); return; }
+    $('#historyList').innerHTML = list.slice(-8).map(x => {
+      const price = (x.amount != null) ? (x.amount + (x.unit || '')) : '';
+      return `<div class="history-item"><span class="h-date">${escapeHtml((x.created_at || '').slice(0, 10))}</span>`
+        + `<span class="h-type">${escapeHtml(x.cost_type || '')}</span>`
+        + `<span class="h-price">${escapeHtml(String(price))}</span></div>`;
+    }).join('');
+    box.classList.remove('hidden');
+  } catch (e) { box.classList.add('hidden'); }
+}
+
+function hideHistory() { $('#historyBox').classList.add('hidden'); }
+
+async function doSummary() {
+  $('#summaryModal').classList.remove('hidden');
+  $('#summaryBody').innerHTML = '<div class="empty">统计中…</div>';
+  try {
+    const data = await api('GET', '/api/summary');
+    const projs = Object.keys(data);
+    if (!projs.length) { $('#summaryBody').innerHTML = '<div class="empty">还没有带金额的记录。</div>'; return; }
+    let html = '';
+    for (const p of projs) {
+      const byType = data[p];
+      let sum = 0, cnt = 0;
+      const rowsHtml = Object.keys(byType).map(t => {
+        const d = byType[t];
+        sum += d.total; cnt += d.count;
+        return `<tr><td>${escapeHtml(t)}</td><td>${d.count} 条</td><td class="num">${d.total}</td></tr>`;
+      }).join('');
+      html += `<div class="sum-block"><div class="sum-proj">${escapeHtml(p)}</div>`
+        + `<table class="sum-table"><tr><th>类别</th><th>条数</th><th class="num">合计</th></tr>`
+        + rowsHtml + `<tr class="sum-total"><td>合计</td><td>${cnt} 条</td><td class="num">${Math.round(sum * 100) / 100}</td></tr></table></div>`;
+    }
+    $('#summaryBody').innerHTML = html;
+  } catch (e) {
+    $('#summaryBody').innerHTML = '<div class="empty">统计失败，稍后重试。</div>';
+  }
 }
 
 // ---- 初始化 ----
@@ -281,6 +369,16 @@ function init() {
   $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
   $('#save').addEventListener('click', saveRecord);
   $('#delete').addEventListener('click', deleteRecord);
+  $('#summaryBtn').addEventListener('click', doSummary);
+  $('#summaryClose').addEventListener('click', () => $('#summaryModal').classList.add('hidden'));
+  $('#summaryModal').addEventListener('click', (e) => { if (e.target.id === 'summaryModal') $('#summaryModal').classList.add('hidden'); });
+  $('#photoBtn').addEventListener('click', () => $('#photoFile').click());
+  $('#photoFile').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) compressImage(f, 1000, 0.7, (d) => { if (d) { state.photo = d; renderPhoto(d); } else { toast('图片读取失败'); } });
+    e.target.value = '';
+  });
+  $('#photoDel').addEventListener('click', () => { state.photo = null; renderPhoto(null); });
   $('#importBtn').addEventListener('click', () => $('#importFile').click());
   $('#importFile').addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0];
