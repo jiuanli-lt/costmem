@@ -26,7 +26,7 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "assistant.db")
 PORT = int(os.environ.get("PORT", "8000"))
-VERSION = '1.5.4'  # +全专业建筑材料词库扩充(817材料/76人工/100机械)+规格正则增强(钢材牌号/压力等级/功率容量)
+VERSION = '1.5.5'  # +编辑内容后重新识别(cost_type/category/project)+parse_items增强(括号注释价/分项编号/m2不泄漏/1.5厚)
 
 # ---- 鉴权配置（云端务必通过环境变量设置）----
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
@@ -230,6 +230,7 @@ _SPEC_RE = re.compile(
     r'|(?i:K\d+)'                                                           # 球墨铸铁管等级 K9/K8
     r'|[Φφδ]\s*\d+(?:\.\d+)?'                                              # 直径/厚度符号
     r'|厚\s*\d+(?:\.\d+)?\s*(?:mm|cm|m)?'                                  # 厚20mm
+    r'|\d+(?:\.\d+)?\s*厚(?![\d.])'                                         # 1.5厚 / 2厚
     r'|[CM]\d+(?:\.\d+)?'                                                  # 强度等级 C30/M10
     r'|(?:HRB|HPB|HRBF|CRB)\d+[E]?|Q\d{2,3}[A-Z]?'                        # 钢材牌号 HRB400E Q235
     r'|PN\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:MPa|kPa)'                        # 压力等级 PN1.6 1.6MPa
@@ -318,7 +319,7 @@ PRICE_KW = ['单价', '人工', '人工费', '价格', '报价', '多少钱', '�
             '工资', '工价', '台班', '租赁']
 # 类型指示词（显式声明，优先级最高）。具体条目名走 cost_items.json 数据包。
 COST_KW = {
-    '人工': ['人工', '人工费', '工资', '劳务', '工价', '工日', '砌筑', '砌砖', '抹灰'],
+    '人工': ['人工', '人工费', '工资', '劳务', '工价', '工日', '砌筑', '砌砖', '抹灰', '清包'],
     '材料': ['材料'],
     '机械': ['机械', '台班', '租赁', '设备'],
 }
@@ -358,7 +359,7 @@ def detect_category(text, amount=None):
     return '备忘'
 
 
-STRONG_TYPE_KW = {'材料': '材料', '机械': '机械', '人工': '人工', '人工费': '人工', '工资': '人工'}
+STRONG_TYPE_KW = {'材料': '材料', '机械': '机械', '人工': '人工', '人工费': '人工', '工资': '人工', '清包': '人工'}
 
 
 def detect_cost_type(text):
@@ -416,13 +417,33 @@ def parse_items(content):
     价格优先认：带货币(元/块/￥) / 每+单价单位(/m、/卷)。
     若整段无任何带货币价格，才退回取末尾裸数字(如 杂工220)。
     坚决排除型号号(1.5mm、5*6、3.2MPa、m3里的3)。
+    括号内的价格视为注释/替代价，不生成独立 item。
     """
     if not content:
         return []
     norm = normalize_numbers(content)
     _BARE = re.compile(r'(?<![\d.*/])(?P<num>\d+(?:\.\d+)?)(?![\d.])(?=[\s，,；;。]|$)')
     items = []
-    segs = re.split(r'[；;。、\n]', norm)
+    # 分节：支持 ；;。、\n\t 以及 )2. )3. 这类分项编号
+    norm = re.sub(r'(?<=[)）])\s*(\d+\.\s*)(?=[\u4e00-\u9fa5])', r'\n\1', norm)
+    segs = re.split(r'[；;。、\n\t]', norm)
+
+    def _in_parens(seg, start, end):
+        """若价格完全位于一对括号内，返回 (open_idx, close_idx)。"""
+        open_idx = max(seg.rfind('（', 0, start), seg.rfind('(', 0, start))
+        if open_idx == -1:
+            return None
+        if '）' in seg[open_idx:start] or ')' in seg[open_idx:start]:
+            return None
+        close_idx = len(seg)
+        if '）' in seg[end:]:
+            close_idx = min(close_idx, seg.find('）', end))
+        if ')' in seg[end:]:
+            close_idx = min(close_idx, seg.find(')', end))
+        if close_idx == len(seg):
+            return None
+        return open_idx, close_idx
+
     for seg in segs:
         seg = seg.strip()
         if not seg:
@@ -445,6 +466,19 @@ def parse_items(content):
             except (TypeError, ValueError):
                 seg_prev = m.end()
                 continue
+            # 括号内的价格视为注释/替代价，不生成独立 item
+            pb = _in_parens(seg, m.start(), m.end())
+            if pb:
+                open_idx, close_idx = pb
+                if items:
+                    prev_note = items[-1].get('note') or ''
+                    # 若前一条 note 只开了括号没闭合（被截断的注释），用完整括号替换
+                    if (prev_note.startswith('（') and '）' not in prev_note) or \
+                       (prev_note.startswith('(') and ')' not in prev_note):
+                        prev_note = ''
+                    items[-1]['note'] = (prev_note + ' ' + seg[open_idx:close_idx+1]).strip()
+                seg_prev = close_idx + 1
+                continue
             if cur and u:
                 unit = cur + '/' + u
             elif cur:
@@ -463,7 +497,14 @@ def parse_items(content):
             specs = _SPEC_RE.findall(before)
             spec = ' '.join(specs).strip() if specs else ''
             name = _SPEC_RE.sub(' ', before).strip().rstrip('，,、：:').strip()
-            name = re.sub(r'[的一]$', '', name).strip()
+            name = re.sub(r'[的一为]$', '', name).strip()
+            # 去掉前导 item 编号 1. 2. 3.
+            name = re.sub(r'^\d+\.\s*', '', name).strip()
+            # "标签:value" 形式，取冒号后内容作为名称（如 "本工程单价：屋面卷材防水"）
+            if '：' in name or ':' in name:
+                tail = re.split(r'[：:]', name)[-1].strip()
+                if len(tail) >= 2 and not re.match(r'^\d', tail):
+                    name = tail
             # 连续清理名称末尾的价格上下文噪声词（允许 - / 空格等连接符一起去掉）
             for _ in range(10):
                 new_name = re.sub(r'[-/\s，,、：:]*' + _PRICE_NOISE + r'[\s，,、：:]*$', '', name).strip()
@@ -474,6 +515,7 @@ def parse_items(content):
             # 备注：价格之后到下一个价格之前（若段内多个价格用逗号连接）
             next_start = ms[idx + 1].start() if idx + 1 < len(ms) else len(seg)
             after = seg[m.end():next_start].strip()
+            consumed = 0
             # 如果 after 去掉标点后是下一个 item 的"名称+量词"，不当作本条备注
             _tail = after.lstrip('，,、：:。） ').strip()
             if re.search(r'(?:一卷|一包|一桶|一根|一袋|一箱|一捆|一车|一台|一套|一组|一张|一块|一件|一只|一个|一樘|一扇|一座|一处|一项|一次|一遍|一道|一层)$', _tail):
@@ -486,11 +528,12 @@ def parse_items(content):
                     _ut = re.match(r'^每(?P<u>' + _UNIT_ALT + r')\b', after)
                 if _ut:
                     unit = (unit or '元') + '/' + _ut.group('u')
+                    consumed = _ut.end()
                     after = after[_ut.end():].strip().lstrip('，,、：:').strip()
                 after = re.sub(r'^(一卷|一包|一桶|一根|一袋|一箱|一捆|一车|一台|一套|一组|一张|一块|一件|一只|一个|一樘|一扇|一座|一处|一项|一次|一遍|一道|一层)[，,、：:]?', '', after).strip()
                 after = re.sub(r'^' + _PRICE_NOISE + r'[\s，,、：:]*', '', after).strip()
             if not name and not unit:
-                seg_prev = m.end()
+                seg_prev = m.end() + consumed
                 continue
             items.append({
                 'name': name,
@@ -500,7 +543,7 @@ def parse_items(content):
                 'note': after,
                 'has_cur': bool(cur),
             })
-            seg_prev = m.end()
+            seg_prev = m.end() + consumed
     return items
 
 
@@ -1039,6 +1082,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         project = body.get('project', row['project'])
         category = body.get('category', row['category'])
         cost_type = body.get('cost_type', row['cost_type'])
+        # 编辑时若前端把旧值原样传回，视为未手动改动，按新内容重新识别
+        if project == row['project']:
+            project = None
+        if category == row['category']:
+            category = None
+        if cost_type == row['cost_type']:
+            cost_type = None
         feature = body.get('feature', row['feature'])
         note = body.get('note', row['note'])
         tax_mode = body.get('tax_mode', row['tax_mode'])
