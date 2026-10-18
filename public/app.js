@@ -153,7 +153,7 @@ function renderPreview(rec) {
     return;
   }
   let html = '我帮你认成：' + parts.join('');
-  if (Array.isArray(rec.items) && rec.items.length > 1) {
+  if (Array.isArray(rec.items) && rec.items.length > 0) {
     html += '<div class="pv-items">' + rec.items.map(it =>
       `<div class="pvi">${escapeHtml(it.name || '')} ${it.amount}${escapeHtml(it.unit || '')}</div>`
     ).join('') + '</div>';
@@ -266,7 +266,8 @@ async function openEdit(id) {
   state.photo = undefined;
   renderPhoto(r.has_photo ? ('/api/photo/' + id) : null);
   setCostPick($('#taxPick'), r.tax_mode || '未标');
-  setCostPick($('#costPick'), r.cost_type || '自动');
+  // 编辑时默认「自动」，内容改动后随新内容重新识别；用户仍可手动点选覆盖
+  setCostPick($('#costPick'), '自动');
   $('#delete').classList.remove('hidden');
   renderPreview(r);
   loadHistory(r.content);
