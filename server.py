@@ -338,12 +338,14 @@ COST_ITEMS_COUNT = sum(len(v) for v in COST_ITEMS.values())
 PROJECT_RES = [
     re.compile(r'项目[：:是为]?\s*([^\s，。,.;；、]+)'),
     re.compile(r'(?:在|于)\s*([^\s，。,.;；、]+?)\s*(?:项目|工地|工程)'),
-    re.compile(r'(?:工地|工程)[：:是为]?\s*([^\s，。,.;；、]+)'),
+    re.compile(r'(?:工地|工程)(?!单价|造价|量|款)[：:是为]?\s*([^\s，。,.;；、]+)'),
     # 名称后置："外滩项目"/"丹江工地"（黑名单防误抓，见 find_project）
     # lookbehind 排除数字/"一"，避免把"350一天外滩项目"的"一天外滩"当名称
     re.compile(r'(?<![0-9一])([\u4e00-\u9fa5]{2,6}?)(?:项目|工地|工程)(?![：:是为])'),
 ]
 _PROJECT_BLACKLIST = {'记事本', '小本', '本', '该', '此', '整', '事项', '备忘', '记账'}
+# 项目名不得以这些成本/价格词开头（防止 "工程单价：..." / "本工程为清包工价" 误抓）
+_INVALID_PROJECT_START = re.compile(r'^(单价|价格|含税|不含|清包|包工|材料|人工|机械|费用|总计|合计)')
 
 
 def detect_category(text, amount=None):
@@ -552,7 +554,7 @@ def find_project(text):
         m = rx.search(text)
         if m:
             name = m.group(1).strip()
-            if name and name not in _PROJECT_BLACKLIST:
+            if name and name not in _PROJECT_BLACKLIST and not _INVALID_PROJECT_START.search(name):
                 return name
     return None
 
